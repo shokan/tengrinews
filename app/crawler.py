@@ -1,52 +1,55 @@
 import pandas as pd
-import requests
-from fake_useragent import UserAgent
-from bs4 import BeautifulSoup
 from tqdm import tqdm
 import time
+from utils import get_soup, _establish_connection
+import mysql.connector as mysql
+import conf
+import requests
+import sys
 
-MAIN_LINK = "https://tengrinews.kz"
-PAGE_NUM = 4
-
-def _get_soup(some_link):
-    response = requests.get(some_link, headers={"User-Agent": UserAgent(verify_ssl=False).chrome})
-    soup = BeautifulSoup(response.content, "html.parser")
-    return soup
-_get_soup(MAIN_LINK)
+try:
+    TOTAL_PAGE_NUMBER = int(sys.argv[1])
+except:
+    TOTAL_PAGE_NUMBER = 3
 
 def _get_link(PAGE_NUM):
     PAGE_LINK = "https://tengrinews.kz/news/page/{}/".format(PAGE_NUM)
-    soup = _get_soup(PAGE_LINK)
+    soup = get_soup(PAGE_LINK)
     link_raw = soup.findAll("a", attrs={"class", "tn-link"})
     links = [i["href"] for i in link_raw]
     return links
-all_links = _get_link(4)
 
-TOTAL_PAGE_NUMBER = 5
+def _existance_checker(link):
+    conection = _establish_connection(conf.DB_CREDENTIALS)
+    mysql_cursor = conection.cursor()
 
-all_links = []
-for i in range(TOTAL_PAGE_NUMBER):
+    mysql_cursor.execute(
+        "SELECT count(*) FROM news.links where link = '{}'".format(link)
+    )
+    row_count = mysql_cursor.fetchone()
+
+    return row_count[0]
+
+def insert_links(link):
+    try:
+        conection = _establish_connection(conf.DB_CREDENTIALS)
+        mysql_cursor = conection.cursor()
+
+        sql = "INSERT INTO news.links (link, is_broken) VALUES ('{}', 0)".format(link)
+        mysql_cursor.execute(sql)
+
+        conection.commit()
+    except:
+        result = 'Error: unable to record values {}'.format(link)
+        print(result)
+
+for i in tqdm(range(TOTAL_PAGE_NUMBER)):
     links = _get_link(i)
-    all_links.append(links)
+    for link in links:
+        if _existance_checker(link) > 0:
+            pass
+        else:
+            insert_links(link)
 
-def get_page_info(link):
-    main_soup = _get_soup(link)
-    news_text = main_soup.find("div", attrs={'class': 'tn-news-text'}).text
-    news_title = main_soup.find("h1", attrs={'class': 'tn-content-title'}).text
-    datetime = main_soup.find("li", attrs={"class": "tn-hidden@t"}).text
-
-    info = {
-        'news_text': news_text,
-        'news_title': news_title,
-        'datetime': datetime,
-    }
-    return info
-
-news_dataset = pd.DataFrame(columns=['news_title', 'news_text', 'datetime'])
-
-for link in tqdm(all_links):
-    link = '{}{}'.format(MAIN_LINK, link)
-    news_dataset = news_dataset.append(get_page_info(link), ignore_index=True)
     time.sleep(0.1)
 
-print(news_dataset.head())
